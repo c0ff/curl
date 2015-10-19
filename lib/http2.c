@@ -986,6 +986,30 @@ static ssize_t http2_handle_stream_close(struct http_conn *httpc,
   return 0;
 }
 
+static int h2_session_send(struct SessionHandle *data,
+                           nghttp2_session *h2)
+{
+  struct HTTP *stream = data->req.protop;
+  if((data->set.stream_prio !=
+      data->state.stream_prio) ||
+     (data->set.stream_depends_e !=
+      data->state.stream_depends_e)) {
+    /* send new prio */
+    nghttp2_priority_spec pri_spec;
+    nghttp2_priority_spec_init(&pri_spec,
+                               stream->stream_id,
+                               data->set.stream_prio,
+                               data->set.stream_depends_e);
+    data->state.stream_prio = data->set.stream_prio;
+    data->state.stream_depends_e = data->set.stream_depends_e;
+  }
+  if((data->set.stream_depends_on !=
+      data->state.stream_depends_on) ) {
+    /* send new dep */
+  }
+  return nghttp2_session_send(h2);
+}
+
 /*
  * If the read would block (EWOULDBLOCK) we return -1. Otherwise we return
  * a regular CURLcode value.
@@ -1140,7 +1164,7 @@ static ssize_t http2_recv(struct connectdata *conn, int sockindex,
     }
     /* Always send pending frames in nghttp2 session, because
        nghttp2_session_mem_recv() may queue new frame */
-    rv = nghttp2_session_send(httpc->h2);
+    rv = h2_session_send(data, httpc->h2);
     if(rv != 0) {
       *err = CURLE_SEND_ERROR;
       return 0;
@@ -1210,7 +1234,7 @@ static ssize_t http2_send(struct connectdata *conn, int sockindex,
     stream->upload_mem = mem;
     stream->upload_len = len;
     nghttp2_session_resume_data(h2, stream->stream_id);
-    rv = nghttp2_session_send(h2);
+    rv = h2_session_send(conn->data, h2);
     if(nghttp2_is_fatal(rv)) {
       *err = CURLE_SEND_ERROR;
       return -1;
@@ -1377,7 +1401,7 @@ static ssize_t http2_send(struct connectdata *conn, int sockindex,
         stream_id, conn->data);
   stream->stream_id = stream_id;
 
-  rv = nghttp2_session_send(h2);
+  rv = h2_session_send(conn->data, h2);
 
   if(rv != 0) {
     *err = CURLE_SEND_ERROR;
@@ -1536,7 +1560,7 @@ CURLcode Curl_http2_switched(struct connectdata *conn,
   }
 
   /* Try to send some frames since we may read SETTINGS already. */
-  rv = nghttp2_session_send(httpc->h2);
+  rv = h2_session_send(data, httpc->h2);
 
   if(rv != 0) {
     failf(data, "nghttp2_session_send() failed: %s(%d)",
